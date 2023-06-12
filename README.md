@@ -1,5 +1,5 @@
-# Diabet-Prediction-
-In this project I applied all the prediction models methods on the Diabetic dataset from UCI repository.
+# Readmission-Prediction-
+In this project I applied all the prediction models methods on the Diabetic dataset from UCI repository for a hospital readmission prediction.
 #Initially, I performed some data cleaning and preprocessing steps on the dataset. after that I end up containing 45 predictors and 289 observations. I dropped variables that contained missing values, such as weight or the ones that didn't contain any special information like some ids.Moreover, removed rows with missing values.
 
 #Next, I bucketized the diagnostic columns based on a provided table and transformed all categorical variables into dummy variables. I then split the data into test and train sets , and subsequently scaled the entire dataset to prevent overshadowing effects. While I tried using PCA for dimensionality reduction, the presence of dummy variables caused that  20 principal components could cover 80% of the data, leading to only limited dimensionality reduction. Nonetheless, I kept the PCA data for evaluating the model performance.
