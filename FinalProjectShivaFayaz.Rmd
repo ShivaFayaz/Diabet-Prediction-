@@ -1,0 +1,1302 @@
+---
+title: "FinalProject"
+output:
+  html_document: 
+date: "2023-03-31"
+---
+#1:Reading the data set
+
+```{r}
+diabetic_largedata<-read.csv("diabetic_data.csv",header = T, sep=",",na.strings = "?",stringsAsFactors=T)
+head(diabetic_largedata)
+```
+**EDA
+```{r}
+plot(sapply(diabetic_largedata,function(x)sum(is.na(x))))
+sapply(diabetic_largedata,function(x)sum(is.na(x)))
+```
+```{r}
+str(diabetic_largedata)
+```
+#2:Checking the Missing values
+```{r}
+library(DataExplorer)
+library(mice)
+plot_missing(diabetic_largedata)
+md.pattern(diabetic_largedata,plot = TRUE, rotate.names = TRUE)
+```
+#3:First Drop
+```{r}
+#removing the most missed variables and irrelevant variables(encounter id,patient nbr,weight and payer_code(insurance) and medical speciality, and )
+diabetic_largedata<-diabetic_largedata[,-c(1,2,6,11,12)]
+str(diabetic_largedata)
+
+```
+
+```{r}
+#just check if we have any question mark
+plot(sapply(diabetic_largedata,function(x)sum(grepl("\\?",x))))
+plot(sapply(diabetic_largedata,function(x)sum(grepl(" Unknown/Invalid",x))))
+#many of them are diabetes medication mybe we can group all of them together (group all the medication together) or we can just keep  diabetesMed 
+  
+```
+```{r}
+library(Amelia)
+missmap(diabetic_largedata,main="NA's Precentage",col=c("black","pink"))
+```
+
+##4:Groupimg the Outcome variable
+```{r}
+#here we have 3 classes for outcome varible(readmited) make it to 2 classes 
+table(diabetic_largedata$readmitted)
+#the patient who come after 30 days it is considered as "YES"  if he come back before 30 days the hospital should pay all(reimbersment) so they want to predict the ones that are ptential to come bac to prevent than and don't discharge them soon !
+diabetic_largedata$readmitted<-ifelse(diabetic_largedata$readmitted==">30"|diabetic_largedata$readmitted=="<30","YES","NO")
+table(diabetic_largedata$readmitted)
+```
+```{r}
+table(diabetic_largedata$A1Cresult)
+table(diabetic_largedata$max_glu_serum)
+```
+```{r}
+diabetic_largedata<-subset(diabetic_largedata,max_glu_serum!="None",)
+diabetic_largedata<-subset(diabetic_largedata,A1Cresult!="None",)
+diabetic_largedata<-droplevels(diabetic_largedata)
+plot(table(diabetic_largedata$A1Cresult))
+plot(table(diabetic_largedata$max_glu_serum))
+nrow(diabetic_largedata)
+```
+
+##Checking imbalanceness of Outcome 
+```{r}
+
+#install.packages("lessR")
+library(lessR)
+PieChart(data=diabetic_largedata,readmitted, fill = c("orange", "blue"), main = "Class distributionoof readmitted",values = "%")
+```
+#Second drop 
+```{r}
+#install.packages("Amelia")
+library(naniar)
+missmap(diabetic_largedata)
+gg_miss_var(diabetic_largedata)
+gg_miss_upset(diabetic_largedata)
+#around 2% of the data can be omitted
+```
+```{r}
+#dropping the rows that contain NAs
+diabetic_largedata<-na.omit(diabetic_largedata)
+nrow(diabetic_largedata)
+plot_missing(diabetic_largedata)
+```
+#Checking correlations of categorical 
+```{r}
+#using polycor for getting the correlation of some variables with categorical variables 
+library(polycor)
+#correlation of admission_type_id,discharge_disposition_id,admission_source_id with the outcome
+
+correlationtable <- data.frame(
+  variable = c("admission_source_id", "discharge_disposition_id", "admission_type_id","diag1","diag2","diag3"),
+  readmitted = c(
+    polychor(diabetic_largedata$admission_source_id, diabetic_largedata$readmitted),
+    polychor(diabetic_largedata$discharge_disposition_id, diabetic_largedata$readmitted),
+    polychor(diabetic_largedata$admission_type_id, diabetic_largedata$readmitted),
+    polychor(diabetic_largedata$diag_1,diabetic_largedata$readmitted),
+    polychor(diabetic_largedata$diag_2,diabetic_largedata$readmitted),
+    polychor(diabetic_largedata$diag_3,diabetic_largedata$readmitted)
+  ),
+  age=c(polychor(diabetic_largedata$admission_source_id,diabetic_largedata$age),
+polychor(diabetic_largedata$discharge_disposition_id,diabetic_largedata$age),
+polychor(diabetic_largedata$admission_type_id,diabetic_largedata$age),
+polychor(diabetic_largedata$diag_1,diabetic_largedata$age),
+polychor(diabetic_largedata$diag_2,diabetic_largedata$age),
+polychor(diabetic_largedata$diag_3,diabetic_largedata$age)
+)
+)
+
+correlationtable
+
+```
+#Checking corelation of Numeric variables
+```{r}
+
+library(dplyr)
+numdiab = c()
+for (i in 1:ncol(diabetic_largedata)) {
+  if (is.numeric(diabetic_largedata[,i])){
+    numdiab = append(numdiab, i)
+  }
+}
+numdiab<-diabetic_largedata[,numdiab]
+numdiab<-cbind(numdiab,as.numeric(diabetic_largedata$diag_1),as.numeric(diabetic_largedata$diag_2),as.numeric(diabetic_largedata$diag_3))
+head(numdiab)
+```
+
+
+
+```{r}
+library(corrplot)
+
+corrplot(cor(numdiab),type='upper',tl.srt = 30,method="number",tl.cex = 0.6,bg="gray",title = "Correlation of Numeric Variables")
+
+```
+```{r}
+#admistion type id is highly corelated with some variables but since it is id it should be categorical to prevent over shadow of bigger numbers so I made another data set of literraly numeric varibles 
+numdiab2<-diabetic_largedata[, c("time_in_hospital", "num_lab_procedures", "num_procedures", "num_medications",  "number_diagnoses", "number_outpatient", "number_inpatient","number_emergency")]
+corrplot(cor(numdiab2),type='upper',method = 'pie')
+```
+```{r}
+library(GGally)
+numdiab2$readmitted<-diabetic_largedata$readmitted
+ggpairs(numdiab2, aes(alpha=0.1, color = readmitted))+  theme(plot.title = element_text(size = 16),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        strip.text = element_text(size = 12),
+        panel.spacing = unit(0.2, "lines"),
+        panel.background = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.1),
+        plot.margin = unit(c(1,1,1,1), "cm"))
+
+```
+
+
+```{r}
+cbind(colnames(diabetic_largedata))
+#Diabetics medications = 20:42
+summary(diabetic_largedata[20:42])
+```
+
+#Third Drop : Medications
+```{r}
+diabetic_largedata<-diabetic_largedata[, -c(20:36,38:42)]
+head(diabetic_largedata)
+summary(diabetic_largedata)
+str(diabetic_largedata)
+```
+```{r}
+library(psych)
+data.frame(describe.by(diabetic_largedata))
+```
+```{r}
+sapply(diabetic_largedata,function(x)sum(is.na(x)))
+```
+
+
+```{r}
+#gender age race
+table(diabetic_largedata$race,diabetic_largedata$age)
+```
+```{r}
+ggplot(diabetic_largedata, aes(readmitted)) + 
+           geom_bar(aes(age, fill = factor(readmitted)), position = 'stack')+
+            scale_fill_manual(values = c("#bff5cc",  "#009f71"))+
+            ylab("Readmission")+
+            xlab("age")+
+            ggtitle("Age Vs Readmission")
+```
+```{r}
+ggplot(diabetic_largedata, aes(readmitted)) + 
+           geom_bar(aes(race, fill = factor(readmitted)), position = 'stack')+
+            scale_fill_manual(values = c("#bea9de",  "#895ae8"))+
+            ylab("Readmission")+
+            xlab("Race")+
+            ggtitle("Race Vs Readmission")
+```
+
+
+```{r}
+lapply(diabetic_largedata,function(x)table(x))
+```
+###Data Visualization
+```{r}
+#when you have categorical and continues column you can come up with box plot
+library(ggplot2)
+ggplot(diabetic_largedata, aes_string(x="readmitted",y=diabetic_largedata$num_lab_procedures)) + geom_boxplot(aes(fill=readmitted))+ggtitle("num_lab_procedures grouped by readmitted")
+
+```
+```{r}
+library(ggbeeswarm)
+ggplot(diabetic_largedata, aes_string(x="readmitted",y=diabetic_largedata$num_lab_procedures)) + geom_boxplot(aes(fill=readmitted,color=readmitted)) + geom_quasirandom(alpha = 0.3)
+
+```
+#Ploting boxplot for all continues variable
+
+```{r}
+continuous_vars <- names(diabetic_largedata)[sapply(diabetic_largedata, is.numeric)]
+plots <- list()
+for (var in continuous_vars) {
+  p<-ggplot(diabetic_largedata, aes(x = factor(readmitted), y = .data[[var]], fill = factor(readmitted))) +
+    geom_boxplot() +
+    labs(title = paste("Boxplot of", var)) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+  plots[[var]] <- p
+}
+
+print(plots)
+ 
+```
+```{r}
+continuous_vars <- names(diabetic_largedata)[sapply(diabetic_largedata, is.numeric)]
+
+# create a long format dataset with continuous_vars and readmitted
+df <- reshape2::melt(diabetic_largedata[, c(continuous_vars, "readmitted")], id.vars = "readmitted")
+
+# create boxplots with outcome variable as fill color and facet by continuous variable
+p <- ggplot(df, aes(x = factor(readmitted), y = value, fill = factor(readmitted))) +
+  geom_boxplot() +
+  facet_wrap(~variable, scales = "free_y") +
+  theme_bw()
+
+print(p)
+```
+
+```{r}
+vars <- names(diabetic_largedata)
+plots <- list()
+
+for (var in vars) {
+  if(is.numeric(diabetic_largedata[[var]])) {
+q1<-quantile(diabetic_largedata[[var]], 0.25)
+q3<-quantile(diabetic_largedata[[var]], 0.75)
+p <- ggplot(diabetic_largedata, aes(x = .data[[var]])) +
+      geom_histogram(binwidth = 0.3, col = "black", fill = "#8db700") +
+      geom_vline(xintercept = q1, col = "red", lwd = 2) +
+      geom_vline(xintercept = q3, col = "red", lwd = 2) +
+      labs(title = paste("Histogram of", var)) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  plots[[var]]<-p
+  }else if (is.factor(diabetic_largedata[[var]])) {
+    p<- ggplot(diabetic_largedata, aes(x = .data[[var]], fill = readmitted)) +
+      geom_bar(position = "dodge") +
+      labs(title = paste("Barplot of", var)) +
+      theme_bw() +
+      theme(plot.title = element_text(hjust = 0.5))
+    
+    plots[[var]] <- p
+  }
+}
+
+
+print(plots)
+```
+```{r}
+vars <- names(diabetic_largedata)
+plots <- list()
+
+for (i in 1:(length(vars)-1)) {
+  for (j in (i+1):length(vars)) {
+    if(is.numeric(diabetic_largedata[[vars[i]]]) && is.numeric(diabetic_largedata[[vars[j]]])) {
+      p <- ggplot(diabetic_largedata, aes(x = .data[[vars[i]]], y = .data[[vars[j]]], color = factor(readmitted))) +
+        geom_point() +
+        labs(title = paste("Scatterplot of", vars[i], "vs.", vars[j])) +
+        theme_bw() +
+        theme(plot.title = element_text(hjust = 0.5))
+      
+      plots[[paste(vars[i], vars[j], sep="_")]] <- p
+    }
+  }
+}
+
+
+print(plots)
+```
+
+
+#Diag bocketting :
+```{r}
+str(diabetic_largedata)
+```
+
+```{r}
+# If any of the diagnosis codes falls in the range of 390-459 or is equal to 785, the row is assigned to the "diag_circ" category. If the code falls in the range of 460-519 or is equal to 786, the row is assigned to the "diag_resp" category. If the code falls in the range of 520-579 or is equal to 787, the row is assigned to the "diag_dig" category. If the code falls  is greater than 251 but less than 249, the row is assigned to the "diag_diab" category. If the code falls in the range of 290-319 or is equal to 780 or 781, the row is assigned to the "diag_ment" category. If the code falls in the range of 800-999, the row is assigned to the "diag_inj" category. If the code falls in the range of 710-739 or is equal to 736, the row is assigned to the "diag_musc" category. If the code falls in the range of 580-629 or is equal to 788, the row is assigned to the "diag_geni" category. If the code falls in the range of 140-239, the row is assigned to the "diag_neop" category. If the code doesn't fall into any of these ranges, the row is assigned to the "diag_other" category.
+
+diabetic_largedata$diag_circ <- 0
+diabetic_largedata$diag_resp <- 0
+diabetic_largedata$diag_dig <- 0
+diabetic_largedata$diag_diab <- 0
+diabetic_largedata$diag_inj <- 0
+diabetic_largedata$diag_musc <-0
+diabetic_largedata$diag_geni <- 0
+diabetic_largedata$diag_neop <-0
+diabetic_largedata$diag_other <- 0
+
+# Loop through each row of the data frame
+for (i in 1:nrow(diabetic_largedata)) {
+
+  # Check each diagnosis code in the row and assign to the appropriate category
+  for (j in 1:3) {
+    code <- as.character(diabetic_largedata[i, paste0("diag_", j)])
+    
+    if (code >= "390" & code <= "459" | code == "785") {
+      diabetic_largedata[i, "diag_circ"] <- 1
+    } else if (code > "249" & code < "251") {
+      diabetic_largedata[i, "diag_diab"] <- 1
+    } else if (code >= "460" & code <= "519" | code == "786") {
+      diabetic_largedata[i, "diag_resp"] <- 1
+    } else if (code >= "520" & code <= "579" | code == "787") {
+      diabetic_largedata[i, "diag_dig"] <- 1
+    } else if (code >= "800" & code <= "999") {
+      diabetic_largedata[i, "diag_inj"] <- 1
+    } else if (code >= "710" & code <= "739") {
+      diabetic_largedata[i, "diag_musc"] <- 1
+    } else if (code >= "580" & code <= "629" | code == "788") {
+      diabetic_largedata[i, "diag_geni"] <- 1
+    } else if (code >= "140" & code <= "239" ){
+       diabetic_largedata[i, "diag_neop"] <- 1
+    } else (diabetic_largedata$diag_other <- as.numeric(apply(diabetic_largedata[, paste0("diag_", 1:3)], 1, function(x) any(x %in% c("780", "781", "784", paste0(790:799), paste0(240:249), paste0(251:279), paste0(680:709), "782", paste0(1:139), paste0(290:319), paste0(280:289), paste0(320:359), paste0(630:679), paste0(360:389), paste0(740:759), paste0("E", 0:9), paste0("V", 0:9))))))
+  }
+}
+```
+
+```{r}
+str(diabetic_largedata)
+```
+```{r}
+library(ggplot2)
+diag_subset <- diabetic_largedata[, 23:32]
+diag_long <- reshape2::melt(diag_subset)
+ggplot(diag_long, aes(x = variable, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  stat_summary(aes(label = ..y..), fun = sum, geom = "text", position = position_dodge(width = 0.9), vjust = -0.5) +
+  labs(x = "Diagnosis", y = "Frequency") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+#Ploting categorical variable
+#I haven't add the new diags and remove the diag1,2,3 from the data set I'll add later
+```{r}
+categorical_vars <- names(diabetic_largedata)[sapply(diabetic_largedata, is.factor)]
+plots <- list()
+
+for (var in categorical_vars) {
+  p <- ggplot(diabetic_largedata, aes(x = factor(readmitted), fill = .data[[var]])) +
+    geom_bar(position = "fill") +
+    labs(title = paste("Barplot of", var)) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  plots[[var]] <- p
+}
+
+plots
+```
+#Dummy
+```{r}
+library(caret)
+diabetic_largedata$discharge_disposition_id <- as.factor(diabetic_largedata$discharge_disposition_id)
+diabetic_largedata$admission_type_id <- as.factor(diabetic_largedata$admission_type_id)
+diabetic_largedata$admission_source_id <- as.factor(diabetic_largedata$admission_source_id)
+dummy1 <- predict(dummyVars(~race+gender+age+discharge_disposition_id + admission_type_id + max_glu_serum + A1Cresult + admission_source_id+insulin+change+diabetesMed, data = diabetic_largedata), newdata = diabetic_largedata)
+head(dummy1)
+colnames(dummy1)
+```
+
+```{r}
+colnames(dummy1)[colnames(dummy1) == "A1Cresult.>7"] <- "A1Cresult7"
+colnames(dummy1)[colnames(dummy1) == "A1Cresult.>8"] <- "A1Cresult8" 
+colnames(dummy1)[colnames(dummy1) == "max_glu_serum.>300"] <- "max_glu_serum300" 
+colnames(dummy1)[colnames(dummy1) == "max_glu_serum.>200"] <- "max_glu_serum200"
+colnames(dummy1)[colnames(dummy1) == "age.[10-20)"] <- "agefirst"
+colnames(dummy1)[colnames(dummy1) == "age.[20-30)"] <- "agesecond"
+colnames(dummy1)[colnames(dummy1) == "age.[30-40)"] <- "agethird"
+colnames(dummy1)[colnames(dummy1) == "age.[40-50)"] <- "ageforth"
+colnames(dummy1)[colnames(dummy1) == "age.[50-60)"] <- "agefifth"
+colnames(dummy1)[colnames(dummy1) == "age.[60-70)"] <- "agesixth"
+colnames(dummy1)[colnames(dummy1) == "age.[70-80)"] <- "ageseventh"
+colnames(dummy1)[colnames(dummy1) == "age.[80-90)"] <- "ageeighth"
+colnames(dummy1)
+```
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+
+```{r}
+diabetic_largedata<-cbind(diabetic_largedata[,-c(1:6 ,14:16 ,18:22 )],dummy1)
+head(diabetic_largedata)
+```
+```{r}
+#replacing "." with empthy variable
+colnames(diabetic_largedata) <- gsub("\\.", "", colnames(diabetic_largedata))
+```
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+
+
+
+```{r}
+summary(diabetic_largedata)
+nrow(diabetic_largedata)
+ncol(diabetic_largedata)
+```
+
+#Bringing outcome variable to the last column
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+```{r}
+diabetic_largedata<-diabetic_largedata[c(1:8, 10:63, 9)]
+head(diabetic_largedata)
+```
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+#Omitting the columns that their variance is near to 0 like 0.01
+```{r}
+#lapply(data.frame(dummy1),function(x)table(x))
+#some of the columns has so many 0s
+table_list <- lapply(data.frame(dummy1), function(x) table(x))
+plot_table <- function(tbl, var_name) {
+  barplot(tbl, main = var_name, col = rainbow(length(tbl)), 
+          xlab = "", ylab = "", border = NA)
+  legend("topright", legend = names(tbl), fill = rainbow(length(tbl)), 
+         bty = "n", cex = 0.8)
+}
+
+mapply(plot_table, table_list, var_name = colnames(dummy1))
+
+
+
+```
+```{r}
+lapply(data.frame(dummy1),function(x)var(x))
+```
+
+```{r}
+#omiting the columns with the nearZero variance
+variances <- lapply(diabetic_largedata,function(x)var(x))
+near_zero <- which(variances < 0.05)
+colnames(diabetic_largedata)[near_zero]
+```
+```{r}
+cols_to_remove <- c("diag_musc","diag_neop","raceAsian","raceOther","agefirst","agesecond","discharge_disposition_id5","discharge_disposition_id7","discharge_disposition_id10","discharge_disposition_id11","discharge_disposition_id13","admission_type_id2","admission_type_id3","admission_source_id2","insulinUp")
+
+diabetic_largedata <- diabetic_largedata[, !(colnames(diabetic_largedata) %in% cols_to_remove)]
+```
+
+
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+```{r}
+nzv_cols <- nearZeroVar(diabetic_largedata[, -48], saveMetrics = TRUE)$nzv
+cbind(nzv_cols)
+```
+```{r}
+diabetic_largedata<-diabetic_largedata[,-c(5,6)]
+str(diabetic_largedata)
+```
+
+
+
+
+#Test & Train Split
+```{r}
+library(caTools)
+set.seed(123)
+split<-sample.split(diabetic_largedata$readmitted,SplitRatio=0.8)
+train_diabetic_largedata<-subset(diabetic_largedata,split==T)
+test_diabetic_largedata<-subset(diabetic_largedata,split==F)
+sum(nrow(train_diabetic_largedata),nrow(test_diabetic_largedata))
+```
+#Feature Scaling
+```{r}
+library(caret)
+normParam <- preProcess(train_diabetic_largedata, method = c("center", "scale"))
+train_diabetic_largedata <- predict(normParam, train_diabetic_largedata)
+test_diabetic_largedata<- predict(normParam,test_diabetic_largedata)
+head(train_diabetic_largedata)
+```
+
+
+
+```{r}
+#install.packages("reshape2")
+library(reshape2)
+library("ggplot2")
+plot_heatmap <- function(data, outcome_var) {
+ 
+  data_numeric <- data[, sapply(data, is.numeric)]
+
+  corr_matrix <- cor(data_numeric)
+  ggplot(data = melt(corr_matrix), aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "#f7fbff", high = "#08306b", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Correlation") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 10, hjust = 1)) +
+    ggtitle(paste("Correlation Heatmap of", ncol(data_numeric), "Numeric Variables"))
+}
+
+plot_heatmap(train_diabetic_largedata, readmitted)
+
+```
+```{r}
+train_diabetic_largedata$readmitted<-as.factor(train_diabetic_largedata$readmitted)
+test_diabetic_largedata$readmitted<-as.factor(test_diabetic_largedata$readmitted)
+str(train_diabetic_largedata$readmitted)
+table(train_diabetic_largedata$readmitted)
+```
+```{r}
+cbind(colnames(diabetic_largedata))
+```
+**Unsupervised Learning**
+
+##PCA
+```{r}
+set.seed(123)
+PCA <- prcomp(train_diabetic_largedata[,-46],
+                 center = TRUE,
+                 scale = TRUE) 
+library("factoextra")
+library("factoextra")
+get_eigenvalue(PCA)
+fviz_eig(PCA)
+```
+```{r}
+#Since 80% of information covered by the fist 20 columns so I'll go for pcaComp 20! > Because I've put dummyies in the pca I get this result
+PCa<-preProcess(x = train_diabetic_largedata[-46],method="pca", pcaComp = 20)
+PCa_train_diabetic_largedata<-predict(PCa, train_diabetic_largedata)
+PCa_test_diabetic_largedata<-predict(PCa, test_diabetic_largedata)
+```
+```{r}
+head(PCa_train_diabetic_largedata)
+```
+
+```{r}
+train_diabetic_largedata$readmitted <- as.factor(ifelse(train_diabetic_largedata$readmitted == "YES", "1", "0"))
+test_diabetic_largedata$readmitted<-as.factor(ifelse(test_diabetic_largedata$readmitted=="YES","1","0"))
+table(train_diabetic_largedata$readmitted)
+table(test_diabetic_largedata$readmitted)
+str(train_diabetic_largedata$readmitted)
+str(test_diabetic_largedata$readmitted)
+```
+```{r}
+PCa_train_diabetic_largedata$readmitted <- as.factor(ifelse(PCa_train_diabetic_largedata$readmitted == "YES", "1", "0"))
+PCa_test_diabetic_largedata$readmitted<-as.factor(ifelse(PCa_test_diabetic_largedata$readmitted=="YES","1","0"))
+table(PCa_train_diabetic_largedata$readmitted)
+table(PCa_test_diabetic_largedata$readmitted)
+str(PCa_train_diabetic_largedata$readmitted)
+str(PCa_test_diabetic_largedata$readmitted)
+```
+##K-means Clustering
+```{r}
+# In this dataset we don't have technically any variables that may need unsupervised learning (like comment or unlabeled data) so I just practice the clustering on train data but I know that in clustering we don't need to split the test and train 
+wcss = vector()
+for (i in 1:10){
+    model_kmeans = kmeans(train_diabetic_largedata, i)
+    wcss[i] = sum(model_kmeans$withinss)
+}
+
+plot(1:10,
+     wcss,
+     type = 'b',
+     main = paste('The Elbow Method'),
+     xlab = 'Number of clusters',
+     ylab = 'WCSS')
+#based on elbow method two clusters make sence
+```
+```{r}
+library(cluster)
+model_kmeans<- kmeans(train_diabetic_largedata, 3)
+y_kmeans<- model_kmeans$cluster
+kmeans_model_kmeans = kmeans(x = train_diabetic_largedata, centers = 3)
+clusplot(train_diabetic_largedata,
+         y_kmeans,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels = 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = 'Clusters of patients',
+         xlab = 'Xlab',
+         ylab = 'Ylab')
+```
+
+
+##Hierachical Clustering ON PCA data
+```{r}
+hc <- hclust(d = dist(PCa_train_diabetic_largedata, method = 'euclidean'), method = 'ward.D')
+plot(hc,
+     main = 'Dendrogram',
+     xlab = 'Customers',
+     ylab = 'Euclidean distances')
+```
+```{r}
+#install.packages("factoextra")
+library(factoextra)
+```
+
+
+```{r}
+fviz_nbclust(PCa_train_diabetic_largedata,  kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+#based on silhouette method 2 number of clusters is recommended
+```
+```{r}
+fviz_nbclust(PCa_train_diabetic_largedata[,-1], kmeans, nstart = 1,  method = "gap_stat", nboot = 50)+
+  labs(subtitle = "Gap statistic method")
+```
+
+```{r}
+fviz_nbclust(PCa_train_diabetic_largedata[,-1], hcut, nstart = 1,  method = "gap_stat", nboot = 50)+
+  labs(subtitle = "Gap statistic method")
+```
+```{r}
+#based on the graph optimal number of cluster are different from 2 3 and 8 ! but based on dendogram 3 make sence
+```
+
+
+```{r}
+#I'll go for 2 clusters
+y_hc <-cutree(hc, 3)
+library(cluster)
+clusplot(train_diabetic_largedata,
+         y_hc,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels= 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = 'Clusters of customers',
+         xlab = 'Xlab',
+         ylab = 'Ylab')
+```
+
+
+
+
+**Suppervised learning**
+
+#MODELS :
+```{r}
+# List of Models
+model_list <-c()
+accuracy_list<-c()
+kappa_list<-c()
+```
+
+##Logestic regression :
+```{r}
+LRmodel<-glm(readmitted~.,train_diabetic_largedata,family = "binomial")
+summary(LRmodel)
+#Based un this model if we keep the variable's change, the y starts at 0.6 and for 1 increase in Time in hospital and number of lab procedures the probabality of outcome increase o.5 times and decrease 0.6 times respectively also 1 increase in age(third) decrease the outcome probabality by 60%
+```
+```{r}
+predictLRmodel<-predict(LRmodel,test_diabetic_largedata)
+head(predictLRmodel)
+class_predictLRmodel<-ifelse(predictLRmodel>0.5,1,0)
+plot(LRmodel)
+```
+```{r}
+str(class_predictLRmodel)
+str(test_diabetic_largedata$readmitted)
+```
+
+```{r}
+class(test_diabetic_largedata$readmitted)
+class(class_predictLRmodel)
+```
+
+```{r}
+library(pROC)
+library(caret)
+LRmodelconfusionmatric<-confusionMatrix(test_diabetic_largedata$readmitted,factor(class_predictLRmodel))
+LRmodelconfusionmatric
+LRmodelroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),predictLRmodel,plot=T,print.auc=TRUE)
+LRmodelroc
+```
+```{r}
+model_list <-append(model_list,"LRmodel")
+accuracy_list<-append(accuracy_list,LRmodelconfusionmatric$overall['Accuracy'])
+kappa_list<-append(kappa_list,LRmodelconfusionmatric$overall['Kappa'])
+```
+
+```{r}
+#Logistic regression with just significant variables :
+LRmodel2<-glm(readmitted~time_in_hospital+num_lab_procedures+agethird,train_diabetic_largedata,family = binomial)
+summary(LRmodel2)
+predictLRmodel2<-predict(LRmodel2,test_diabetic_largedata)
+head(predictLRmodel2)
+class_predictLRdimodel2<-ifelse(predictLRmodel2>0.5,1,0)
+
+LRmodelconfusionmatric2<-confusionMatrix(test_diabetic_largedata$readmitted,factor(class_predictLRdimodel2))
+LRmodelconfusionmatric2
+```
+```{r}
+LRmodel2roc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),predictLRmodel2,plot=T,print.auc=TRUE)
+LRmodel2roc 
+```
+
+```{r}
+model_list <-append(model_list,"LRmodel2")
+accuracy_list<-append(accuracy_list,LRmodelconfusionmatric2$overall['Accuracy'])
+kappa_list<-append(kappa_list,LRmodelconfusionmatric2$overall['Kappa'])
+```
+
+```{r}
+#logestic regretion with the PCA data set
+PCALRmodel3<-glm(readmitted~.,PCa_train_diabetic_largedata,family = "binomial")
+summary(PCALRmodel3)
+predictLRmodel3<-predict(PCALRmodel3,PCa_test_diabetic_largedata)
+head(predictLRmodel3)
+class_predictLRmodel3<-ifelse(predictLRmodel3>0.5,1,0)
+head(class_predictLRmodel3)
+```
+```{r}
+table(PCa_test_diabetic_largedata$readmitted)
+```
+
+```{r}
+PCALRmodelconfusionmatric<-confusionMatrix(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(class_predictLRmodel3,ordered=T))
+PCALRmodelconfusionmatric
+```
+```{r}
+LRmodel3roc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),predictLRmodel3,plot=T,print.auc=TRUE)
+LRmodel3roc 
+```
+
+```{r}
+model_list <-append(model_list,"PCALRmodel3")
+accuracy_list<-append(accuracy_list,PCALRmodelconfusionmatric$overall['Accuracy'])
+kappa_list<-append(kappa_list,PCALRmodelconfusionmatric$overall['Kappa'])
+```
+
+##Elastic Net
+```{r}
+library(caret)
+library(glmnet)
+ELmodel<-cv.glmnet(as.matrix(train_diabetic_largedata[,-46]), train_diabetic_largedata$readmitted, family = "binomial", alpha = 0.5)
+ELpredict<-predict(ELmodel,as.matrix(test_diabetic_largedata[,-46]),type="response")
+ELpredict_class<-ifelse(ELpredict>0.5,1,0)
+```
+```{r}
+mean(ELpredict_class==test_diabetic_largedata$readmitted)
+```
+
+```{r}
+ELmodelroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),ELpredict,plot=T,print.auc=TRUE)
+```
+```{r}
+PCaELmodel<-cv.glmnet(as.matrix(PCa_train_diabetic_largedata[,-1]), PCa_train_diabetic_largedata$readmitted, family = "binomial", alpha = 0.5)
+plot(PCaELmodel)
+```
+
+
+```{r}
+PCaELpredict<-predict(PCaELmodel,as.matrix(PCa_test_diabetic_largedata[,-1]))
+PCaELpredict_class<-ifelse(PCaELpredict>0.5,1,0)
+```
+```{r}
+table(PCa_test_diabetic_largedata$readmitted,PCaELpredict_class)
+mean(PCaELpredict_class==PCa_test_diabetic_largedata$readmitted)
+roc(PCa_test_diabetic_largedata$readmitted,PCaELpredict,plot=T,print.auc=TRUE)
+
+```
+
+
+
+
+
+##KNN:
+```{r}
+
+library(class)
+vec = c()
+k_vec = c()
+for (k in 1:50){
+predictKNN= knn(train = train_diabetic_largedata[, -46],test = test_diabetic_largedata[, -46],cl = train_diabetic_largedata$readmitted,k = k)
+
+error = mean(predictKNN != test_diabetic_largedata$readmitted)
+k_vec = c(k_vec, k)
+vec = c(vec, error)}
+dataframeerror<-data.frame(k_vec,vec)
+min_row <- subset(dataframeerror, vec == min(vec))
+ggplot(dataframeerror,aes(x=k_vec,y=vec))+geom_line(color="red")+
+  geom_hline(yintercept = min(dataframeerror$vec), linetype = "dashed") +annotate("text", x = min_row$k_vec, y = min_row$vec, label = min_row$k_vec, vjust = -1)+geom_point(data = min_row, aes(x = k_vec, y = vec), color = "blue", size = 3)
+```
+```{r}
+#k=17
+predictKNN<-knn(train = train_diabetic_largedata[, -46],test = test_diabetic_largedata[, -46],cl = train_diabetic_largedata$readmitted,k = 17)
+head(predictKNN)
+knnconfusionmatrix<-confusionMatrix(factor((test_diabetic_largedata$readmitted),ordered=T),factor(predictKNN,ordered=T))
+knnconfusionmatrix
+predictKNN.roc<-roc(test_diabetic_largedata$readmitted,factor(predictKNN,ordered=T),plot=T,print.auc=TRUE)
+predictKNN.roc
+```
+```{r}
+model_list <-append(model_list,"predictKNN")
+accuracy_list<-append(accuracy_list,knnconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,knnconfusionmatrix$overall['Kappa'])
+```
+
+
+```{r}
+#knn with PCA data
+vec2 = c()
+k_vec2 = c()
+for (k in 1:50){
+predictKNN= knn(train = PCa_train_diabetic_largedata[, -1],test = PCa_test_diabetic_largedata[, -1],cl = PCa_train_diabetic_largedata$readmitted,k = k)
+
+error2 = mean(predictKNN != PCa_test_diabetic_largedata$readmitted)
+k_vec2 = c(k_vec2, k)
+vec2 = c(vec2, error2)}
+dataframeerror2<-data.frame(k_vec2,vec2)
+min_row2 <- subset(dataframeerror2, vec2 == min(vec2))
+ggplot(dataframeerror2,aes(x=k_vec2,y=vec2))+geom_line(color="red")+
+  geom_hline(yintercept = min(dataframeerror2$vec2), linetype = "dashed") +annotate("text", x = min_row2$k_vec2, y = min_row2$vec2, label = min_row2$k_vec2, vjust = -1)+geom_point(data = min_row2, aes(x = k_vec2, y = vec2), color = "blue", size = 3)
+```
+```{r}
+#k=24
+PCApredictKNN<-knn(train = PCa_train_diabetic_largedata[, -1],test = PCa_test_diabetic_largedata[, -1],cl = PCa_train_diabetic_largedata$readmitted,k = 33)
+head(PCApredictKNN)
+PCaKNNconfisionmatrix<-confusionMatrix(factor((PCa_test_diabetic_largedata$readmitted),ordered=T),factor(PCApredictKNN,ordered=T))
+PCaKNNconfisionmatrix
+PCApredictKNN.roc<-roc(PCa_test_diabetic_largedata$readmitted,factor(PCApredictKNN,ordered=T),plot=T,print.auc=TRUE)
+PCApredictKNN.roc 
+```
+```{r}
+model_list <-append(model_list,"PCApredictKNN")
+accuracy_list<-append(accuracy_list,PCaKNNconfisionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,PCaKNNconfisionmatrix$overall['Kappa'])
+```
+
+
+##SVM model :
+```{r}
+#svm radial
+library(e1071)
+tune.svm.largediabet <- tune(svm,train.x=train_diabetic_largedata[, -46],train.y=train_diabetic_largedata[, 46],kernel='radial',ranges=list(cost=10^(-1:2), gamma=c(0.25,.5,1,2)))
+tune.svm.largediabet
+```
+```{r}
+SVMmodel1<-svm(formula = readmitted ~ .,data = train_diabetic_largedata,kernel = 'radial',type="C-classification",cost=0.1,gamma=0.25)
+predictSVMmodel1<-predict(SVMmodel1,test_diabetic_largedata)
+
+SVMmodel1.roc<-roc(test_diabetic_largedata$readmitted,factor(predictSVMmodel1,ordered=T),plot=T,print.auc=TRUE)
+SVMmodel1.roc 
+```
+```{r}
+table(test_diabetic_largedata$readmitted,predictSVMmodel1)
+```
+```{r}
+#all the predictions are 1 seems the SVM model overfitted the train ! I'll try cross validation later 
+```
+```{r}
+#SVM for PCA data
+tune.svm.largediabet2 <- tune(svm,train.x=PCa_train_diabetic_largedata[, -1],train.y=PCa_train_diabetic_largedata[, 1],kernel='radial',ranges=list(cost=10^(-1:2), gamma=c(0.25,.5,1,2)))
+tune.svm.largediabet2
+```
+```{r}
+PCASVMmodel2<-svm(formula = readmitted ~ .,data = PCa_train_diabetic_largedata,kernel = 'radial',type="C-classification",cost=10,gamma=0.5)
+predictSVMmodel2<-predict(PCASVMmodel2,PCa_test_diabetic_largedata)
+table(factor(PCa_test_diabetic_largedata$readmitted),factor(predictSVMmodel2,ordered=T))
+SVMmodel2.roc<-roc(PCa_test_diabetic_largedata$readmitted,factor(predictSVMmodel2,ordered=T),plot=T,print.auc=TRUE)
+SVMmodel2.roc
+```
+**my SVM is working as good as flip a coin !!!!!**
+```{r}
+
+```
+
+##Decession Tree
+```{r}
+library(rpart)
+DTmodel1<-rpart(readmitted ~ ., method='class',data = train_diabetic_largedata)
+plot(DTmodel1, uniform=TRUE, main="Main tree")
+text(DTmodel1, use.n=TRUE, all=TRUE)
+DTpredict1<-predict(DTmodel1,test_diabetic_largedata[-46])
+class_DTpredict1<-ifelse(DTpredict1[,"1"]>0.5,1,0)
+DTconfusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(class_DTpredict1,ordered = T))
+DTconfusionmatrix
+DTpredict1.roc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(class_DTpredict1,ordered = T),plot=T,print.auc=TRUE)
+DTpredict1.roc
+```
+```{r}
+model_list <-append(model_list,"DTmodel1")
+accuracy_list<-append(accuracy_list,DTconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,DTconfusionmatrix$overall['Kappa'])
+```
+
+```{r}
+#Decision Tree in PCA data
+DTmodel2<-rpart(readmitted ~ ., method='class',data = PCa_train_diabetic_largedata)
+plot(DTmodel2, uniform=TRUE, main="Main tree")
+text(DTmodel2, use.n=TRUE, all=TRUE)
+DTpredict2<-predict(DTmodel2,PCa_test_diabetic_largedata[-1])
+class_DTpredict2<-ifelse(DTpredict2[,"1"]>0.5,1,0)
+confusionMatrix(factor(PCa_test_diabetic_largedata$readmitted,ordered = T),factor(class_DTpredict2,ordered = T))
+DTpredict2.roc<-roc(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(class_DTpredict2,ordered = T),plot=T,print.auc=T)
+DTpredict2.roc
+```
+##Random Forest
+```{r}
+library(randomForest)
+RFmodel1<-randomForest(readmitted ~ ., method='class',data =train_diabetic_largedata)
+importance(RFmodel1)
+#based on this model number of medications has the most impact on the readmitted or not readmitted patient, after that time in hospital and number of lab_procedures had impact on readmitted or not readmitted patients
+```
+```{r}
+RFpredict1<-predict(RFmodel1,test_diabetic_largedata)
+#class_RFpredict1<-ifelse(RFpredict1>0.5,1,0)
+RFconfusionmatrix<-confusionMatrix(test_diabetic_largedata$readmitted,factor(RFpredict1,ordered = T))
+RFconfusionmatrix
+RFpredict1.roc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(RFpredict1,ordered = T),plot=T,print.auc=TRUE)
+RFpredict1.roc
+```
+
+```{r}
+model_list <-append(model_list,"RFmodel1")
+accuracy_list<-append(accuracy_list,RFconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,RFconfusionmatrix$overall['Kappa'])
+```
+
+```{r}
+#Rndom Forest with PCA
+PCARFmodel2<-randomForest(readmitted ~ ., method='class',data =PCa_train_diabetic_largedata)
+importance(PCARFmodel2)
+```
+```{r}
+PCaRFpredict2<-predict(PCARFmodel2,PCa_test_diabetic_largedata)
+#PCaRFconfusionmatrix<-confusionMatrix(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(PCaRFpredict2,ordered = T))
+PCaRFconfusionmatrix
+RFpredict2.roc<-roc(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(PCaRFpredict2,ordered = T),plot=T,print.auc=TRUE)
+RFpredict2.roc
+```
+```{r}
+#model_list <-append(model_list,"PCARFDTmodel2")
+#accuracy_list<-append(accuracy_list,PCaRFconfusionmatrix$overall['Accuracy'])
+#kappa_list<-append(kappa_list,PCaRFconfusionmatrix$overall['Kappa'])
+```
+```{r}
+head(test_diabetic_largedata)
+```
+```{r}
+test_diabetic_largedata$readmitted<-as.numeric(test_diabetic_largedata$readmitted)
+train_diabetic_largedata$readmitted<-as.numeric(train_diabetic_largedata$readmitted)
+train_diabetic_largedata$readmitted<-ifelse(train_diabetic_largedata$readmitted==1,0,1)
+test_diabetic_largedata$readmitted<-ifelse(test_diabetic_largedata$readmitted==1,0,1)
+```
+
+```{r}
+str(test_diabetic_largedata$readmitted)
+```
+
+
+
+
+##XGboost
+
+```{r}
+library(xgboost)
+XGboostclassifier <- xgboost(data = as.matrix(train_diabetic_largedata[-46]), 
+                              label = train_diabetic_largedata$readmitted, 
+                             nrounds = 10, 
+                              max_depth = 6, 
+                              eta = 0.3, 
+                              gamma = 0.5, 
+                              subsample = 0.8, 
+                              colsample_bytree = 0.8, 
+                              min_child_weight = 1)
+
+XGboost_predict <- predict(XGboostclassifier, newdata = as.matrix(test_diabetic_largedata[-46]))
+head(XGboost_predict)
+```
+```{r}
+XGboost_predict<-ifelse(XGboost_predict>=0.5,1,0)
+table(test_diabetic_largedata$readmitted,XGboost_predict)
+imp_matrix_XGboos<-xgb.importance(model=XGboostclassifier)
+xgb.plot.importance(imp_matrix_XGboos)
+```
+```{r}
+xgboostconfusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered=T),factor(XGboost_predict,ordered = T))
+xgboostconfusionmatrix
+xgboost.roc<-roc(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(XGboost_predict,ordered = T),plot=T,print.auc=TRUE)
+xgboost.roc
+```
+```{r}
+model_list <-append(model_list,"XGboostclassifier")
+accuracy_list<-append(accuracy_list,xgboostconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,xgboostconfusionmatrix$overall['Kappa'])
+```
+
+
+```{r}
+PCa_test_diabetic_largedata$readmitted<-as.numeric(PCa_test_diabetic_largedata$readmitted)
+PCa_train_diabetic_largedata$readmitted<-as.numeric(PCa_train_diabetic_largedata$readmitted)
+PCa_train_diabetic_largedata$readmitted<-ifelse(PCa_train_diabetic_largedata$readmitted==1,0,1)
+PCa_test_diabetic_largedata$readmitted<-ifelse(PCa_test_diabetic_largedata$readmitted==1,0,1)
+```
+
+
+```{r}
+#XGboost by PCA data
+XGboostclassifier2<- xgboost(data = as.matrix(PCa_train_diabetic_largedata[-1]), label = PCa_train_diabetic_largedata$readmitted, nrounds = 10)
+XGboost_predict2<- predict(XGboostclassifier2, newdata = as.matrix(PCa_test_diabetic_largedata[-1]))
+head(XGboost_predict2)
+```
+```{r}
+XGboost_predict2<-ifelse(XGboost_predict2>=0.5,1,0)
+table(PCa_test_diabetic_largedata$readmitted,XGboost_predict2)
+#confusionMatrix(factor(PCa_test_diabetic_largedata$readmitted,ordered=T),factor(XGboost_predict2,ordered = T))
+imp_matrix_XGboos2<-xgb.importance(model=XGboostclassifier2)
+xgb.plot.importance(imp_matrix_XGboos2)
+```
+
+###Cross Validation
+
+```{r}
+table(test_diabetic_largedata$readmitted)
+table(train_diabetic_largedata$readmitted)
+```
+```{r}
+train_diabetic_largedata$readmitted<-ifelse(train_diabetic_largedata$readmitted=="0","NO","YES")
+test_diabetic_largedata$readmitted<-ifelse(test_diabetic_largedata$readmitted=="0","NO","YES")
+```
+
+```{r}
+# Define trainControl object
+TRC <- trainControl(method = "cv",number = 5,classProbs = TRUE,summaryFunction = twoClassSummary)
+```
+
+##Glm Cross validation
+```{r}
+# Train glm model with cross-validation
+GLMmodelCV <- train(readmitted ~ .,data = train_diabetic_largedata,method = "glm",metric = "ROC",trControl = TRC)
+print(GLMmodelCV)
+```
+```{r}
+GLMmodelCV$results
+GLMmodelCVpredict<-predict(GLMmodelCV,test_diabetic_largedata)
+GLMmodelCVpredict
+```
+```{r}
+GLMmodelCVconfusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(GLMmodelCVpredict,ordered=T))
+GLMmodelCVconfusionmatrix
+```
+```{r}
+GLMmodelCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(GLMmodelCVpredict,ordered = T),plot=T,print.auc=TRUE)
+GLMmodelCVroc
+```
+
+
+```{r}
+model_list <-append(model_list,"GLMmodelCV")
+accuracy_list<-append(accuracy_list,GLMmodelCVconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,GLMmodelCVconfusionmatrix$overall['Kappa'])
+```
+##Random Forest Cross validation
+```{r}
+RFmodelcv <- train(readmitted~., data = train_diabetic_largedata, method = "rf",metric = "ROC",trControl = TRC) 
+RFmodelcv
+```
+```{r}
+RFmodelcvpredict<-predict(RFmodelcv,test_diabetic_largedata)
+RFmodelcvpredict
+```
+```{r}
+RFmodelcvconfusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(RFmodelcvpredict,ordered=T))
+RFmodelcvconfusionmatrix
+```
+```{r}
+RFMmodelCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(RFmodelcvpredict,ordered = T),plot=T,print.auc=TRUE)
+RFMmodelCVroc
+```
+
+```{r}
+model_list <-append(model_list,"RFmodelcv")
+accuracy_list<-append(accuracy_list,RFmodelcvconfusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,RFmodelcvconfusionmatrix$overall['Kappa'])
+```
+
+
+
+##knn Cross validation
+```{r}
+k_values <- seq(1, 20, by = 1)
+KNNmodelCV <- train(
+  readmitted ~ ., 
+  data = train_diabetic_largedata, 
+  method = "knn", 
+  metric = "ROC", 
+  trControl = TRC, 
+  tuneGrid = expand.grid(k = k_values)
+)
+KNNmodelCV
+
+```
+```{r}
+KNNmodelcvpredict<-predict(KNNmodelCV,test_diabetic_largedata)
+KNNpredictCVconfiusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(KNNmodelcvpredict,ordered=T))
+KNNpredictCVconfiusionmatrix
+```
+```{r}
+KNNpredictCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(KNNmodelcvpredict,ordered = T),plot=T,print.auc=TRUE)
+KNNpredictCVroc
+```
+
+```{r}
+model_list <-append(model_list,"KNNmodelCVF")
+accuracy_list<-append(accuracy_list,KNNpredictCVconfiusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,KNNpredictCVconfiusionmatrix$overall['Kappa'])
+```
+
+
+##SVM Cross Validation 
+```{r}
+SVMmodelCV <- train(readmitted ~ ., data = train_diabetic_largedata, method = "svmRadial", tuneLength = 5, preProc = c("center", "scale"), metric = "ROC", trControl = TRC)
+SVMmodelCV
+```
+```{r}
+SVMmodelcvpredict<-predict(SVMmodelCV,test_diabetic_largedata)
+SVMpredictCVconfiusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(SVMmodelcvpredict,ordered=T))
+SVMpredictCVconfiusionmatrix
+```
+```{r}
+SVMmodelCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(SVMmodelcvpredict,ordered = T),plot=T,print.auc=TRUE)
+SVMmodelCVroc
+```
+
+
+```{r}
+model_list <-append(model_list,"SVMmodelCV")
+accuracy_list<-append(accuracy_list,SVMpredictCVconfiusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,SVMpredictCVconfiusionmatrix$overall['Kappa'])
+```
+#XGboost cross validation
+```{r}
+
+XGmodelCV <- train(readmitted ~ .,data = train_diabetic_largedata,method = "xgbTree",metric = "ROC",trControl = TRC,tuneGrid=expand.grid(nrounds = 10, 
+                              max_depth = 6, 
+                              eta = 0.3, 
+                              gamma = 0.5, 
+                              subsample = 0.8, 
+                              colsample_bytree = 0.8, 
+                              min_child_weight = 1))
+XGmodelCV$bestTune
+```
+```{r}
+XGmodelcvpredict<-predict(XGmodelCV,test_diabetic_largedata)
+XGpredictCVconfiusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(XGmodelcvpredict,ordered=T))
+XGpredictCVconfiusionmatrix
+```
+```{r}
+XGmodelCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(XGmodelcvpredict,ordered = T),plot=T,print.auc=TRUE)
+XGmodelCVroc
+```
+
+
+```{r}
+model_list <-append(model_list,"XGmodelCV")
+accuracy_list<-append(accuracy_list,XGpredictCVconfiusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,XGpredictCVconfiusionmatrix$overall['Kappa'])
+```
+#Elastic Net Cross Validation
+```{r}
+ENmodelcv <- train(readmitted ~ .,data = train_diabetic_largedata,method = "glmnet", metric = "ROC", trControl = TRC)
+ENmodelcv
+```
+```{r}
+ENmodelcvpredict<-predict(ENmodelcv,test_diabetic_largedata)
+ENpredictCVconfiusionmatrix<-confusionMatrix(factor(test_diabetic_largedata$readmitted,ordered = T),factor(ENmodelcvpredict,ordered=T))
+ENpredictCVconfiusionmatrix
+```
+```{r}
+ENmodelCVroc<-roc(factor(test_diabetic_largedata$readmitted,ordered=T),factor(ENmodelcvpredict,ordered = T),plot=T,print.auc=TRUE)
+ENmodelCVroc
+```
+
+
+```{r}
+model_list <-append(model_list,"ENmodelcv")
+accuracy_list<-append(accuracy_list,ENpredictCVconfiusionmatrix$overall['Accuracy'])
+kappa_list<-append(kappa_list,ENpredictCVconfiusionmatrix$overall['Kappa'])
+```
+
+```{r}
+table(PCa_test_diabetic_largedata$readmitted)
+table(PCa_train_diabetic_largedata$readmitted)
+```
+#Cross validation on PCA data set 
+```{r}
+PCa_train_diabetic_largedata$readmitted<-as.factor(ifelse(PCa_train_diabetic_largedata$readmitted==0,"NO","YES"))
+PCa_test_diabetic_largedata$readmitted<-as.factor(ifelse(PCa_test_diabetic_largedata$readmitted==0,"NO","YES"))
+table(PCa_train_diabetic_largedata$readmitted)
+table(PCa_test_diabetic_largedata$readmitted)
+```
+
+
+```{r}
+# Define models to compare
+models <- c("glm", "rf", "knn","svmRadial")
+# Train and evaluate models
+results <- lapply(models, function(model) {
+ train(readmitted ~ ., data = PCa_train_diabetic_largedata, method = model, trControl = TRC)
+})
+
+# Compare models using resamples()
+resamples(results)
+```
+
+```{r}
+results
+```
+#Cross validaion in PCA: The ROC of the models on the PCA data is not that high/ the best performance on the PCA data is the KNN by k=9 with the ROC 66% so I didn't conclud them in my final model comparision
+
+#Conclusion(cmparision of the models)
+```{r}
+modelscompare<-data.frame(model_list,accuracy_list,kappa_list)
+modelscompare
+```
+```{r}
+ggplot(modelscompare, aes(x = accuracy_list, y = model_list)) +
+  geom_bar(stat = "identity", aes(fill = kappa_list)) +scale_fill_gradient(low = 'red',high='green')+
+  xlab("Accuracy") +
+  ylab("models") +
+  ggtitle("Models comparision") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+```{r}
+ACUlist<-c(LRmodelroc$auc,LRmodel2roc$auc,LRmodel3roc$auc,ELmodelroc$auc,predictKNN.roc$auc,PCApredictKNN.roc$auc,SVMmodel1.roc$auc,SVMmodel2.roc$auc,DTpredict1.roc$auc,DTpredict2.roc$auc,RFpredict1.roc$auc,RFpredict2.roc$auc,GLMmodelCVroc$auc,RFMmodelCVroc$auc,KNNpredictCVroc$auc,SVMmodelCVroc$auc,XGmodelCVroc$auc,ENmodelCVroc$auc)
+modelnames <- c("LRmodel", "LRmodel2", "LRmodel3", "ELmodel", "predictKNN", "PCApredictKNN", "SVMmodel1", "SVMmodel2", "DTpredict1", "DTpredict2", "RFpredict1", "RFpredict2", "GLMmodelCV", "RFMmodelCV", "KNNpredictCV", "SVMmodelCV", "XGmodelCV", "ENmodelCV")
+```
+
+
+```{r}
+acucompare<-data.frame(modelnames, ACUlist)
+acucompare
+```
+```{r}
+ggplot(acucompare, aes(x = ACUlist, y = modelnames, fill = ACUlist)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient2(low = "red", mid = "yellow", high = "green", midpoint = 0.65)
+
+```
+
+
+```{r}
+#Initially, I performed some data cleaning and preprocessing steps on the dataset. after that I end up containing 45 predictors and 289 observations. I dropped variables that contained missing values, such as weight or the ones that didn't contain any special information like some ids.Moreover, removed rows with missing values.
+
+#Next, I bucketized the diagnostic columns based on a provided table and transformed all categorical variables into dummy variables. I then split the data into test and train sets , and subsequently scaled the entire dataset to prevent overshadowing effects. While I tried using PCA for dimensionality reduction, the presence of dummy variables caused that  20 principal components could cover 80% of the data, leading to only limited dimensionality reduction. Nonetheless, I kept the PCA data for evaluating the model performance.
+ 
+#To evaluate the performance of the supervised learning models, I applied them to both the PCA and non-PCA datasets, and employed 5-fold cross-validation. As the outcome variable was not imbalanced, I considered accuracy evaluation metrics for comparing the models.As well as AUC and Kappa. For checking which same models fit better to data like evaluating several logestic rigressions I compare their Akaike as well.
+#After comparing the performance of various models, I found that the KNN model performed best on the non-PCA dataset with an AUC of 0.7696 and a precision of 73%. Although my best model(KNN) is based on Euclidean distance and it is hard to say which predictor was more important or play more important role in predicting the readmition of the patient, Based on other models like random forest2(accuracy 72% and AUC 69%) and logestic2 regression (accuracy 65%, AUC 71%) I found "Number of lab procedures " and "time in hospitals" important variables 
+```
+
+
+
+
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
